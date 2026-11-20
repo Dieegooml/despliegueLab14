@@ -1,39 +1,60 @@
-name: Build and Deploy .NET Application
 
+name: Build and Deploy .NET Application
 
 on:
   push:
     branches:
-      - main 
+      - main
+  workflow_dispatch:
 
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+
     steps:
-    - name: Check out code
-      uses: actions/checkout@v2
+      - name: Check out code
+        uses: actions/checkout@v6
 
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
 
-    - name: Set up .NET
-      uses: actions/setup-dotnet@v1
-      with:
-        dotnet-version: '8.0'
+      - name: Find .NET project
+        shell: bash
+        run: |
+          mapfile -t projects < <(find . -type f -name '*.csproj' -not -path '*/obj/*' | sort)
 
+          if [ "${#projects[@]}" -ne 1 ]; then
+            echo "Se esperaba un solo archivo .csproj"
+            printf '%s\n' "${projects[@]}"
+            exit 1
+          fi
 
-    - name: Restore dependencies
-      run: dotnet restore
+          echo "PROJECT_FILE=${projects[0]}" >> "$GITHUB_ENV"
 
+      - name: Restore dependencies
+        run: dotnet restore "$PROJECT_FILE"
 
-    - name: Build application
-      run: dotnet build --configuration Release
+      - name: Build application
+        run: dotnet build "$PROJECT_FILE" --configuration Release --no-restore
 
+      - name: Publish application
+        run: dotnet publish "$PROJECT_FILE" --configuration Release --no-restore --output ./published
 
-    - name: Publish application
-      run: dotnet publish --configuration Release --output ./published
+      - name: Save published files
+        uses: actions/upload-artifact@v6
+        with:
+          name: PublicacionLab14
+          path: ./published/
 
+      - name: Deploy to Render
+        if: ${{ env.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
 
-    - name: Deploy to server (ejemplo de despliegue)
-      run: |
-        scp -r ./published username@server:/path/to/deploy
